@@ -40,7 +40,7 @@ def main():
     if args.about:
         print(f"figya {__version__}")
         print("A modern terminal calculator with unit conversions.")
-        print("https://github.com/chrisscottromano/figya")
+        print("https://github.com/chris-biagini/figya")
         return
 
     variables = VariableStore()
