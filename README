@@ -1,5 +1,7 @@
 An interactive command-line calculator. Formerly a wrapper around Google calculator, now a wrapper around Dentaku. This is a barely-functional work in progress! Use at your own risk.
 
+Back in 2009, here's how this thing worked:
+
 Enter an expression to evaluate. Previous results are stored in variables
 starting at <code>$1</code>, and variables are automatically substituted
 when used in expressions. If variables are interfering with expressions

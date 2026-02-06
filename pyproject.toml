@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "figya"
+version = "0.1.0"
+description = "A modern terminal calculator with unit conversions"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "prompt_toolkit>=3.0",
+    "simpleeval>=1.0",
+    "pint>=0.23",
+    "pygments>=2.17",
+]
+
+[project.scripts]
+figya = "figya.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
