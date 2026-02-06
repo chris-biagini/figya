@@ -9,12 +9,25 @@ description = "A modern terminal calculator with unit conversions"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
+authors = [
+    { name = "Chris Biagini", email = "son_lookers_2a@icloud.com" },
+]
+keywords = ["calculator", "unit-conversion", "repl", "terminal"]
+classifiers = [
+    "Environment :: Console",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Programming Language :: Python :: 3",
+]
 dependencies = [
     "prompt_toolkit>=3.0",
     "simpleeval>=1.0",
     "pint>=0.23",
     "pygments>=2.17",
 ]
+
+[project.urls]
+Homepage = "https://github.com/chris-biagini/figya"
+Repository = "https://github.com/chris-biagini/figya"
 
 [project.scripts]
 figya = "figya.cli:main"
