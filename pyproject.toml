@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    { name = "Chris Biagini", email = "son_lookers_2a@icloud.com" },
+    { name = "Chris Biagini", email = "markup-annoyed38@icloud.com" },
 ]
 keywords = ["calculator", "unit-conversion", "repl", "terminal"]
 classifiers = [
