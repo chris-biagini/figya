@@ -1,12 +1,91 @@
 #!/usr/bin/env ruby
+#
+# == Synopsis
+# An interactive command-line interface to the Google Calculator.
+#
+# == License
+# Copyright (C) 2009 Chris Biagini <firstname DOT lastname AT gmail DOT com>.
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#     * Neither the name of the project nor the names of its contributors may 
+#       be used to endorse or promote products derived from this software 
+#       without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE 
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) 
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+# POSSIBILITY OF SUCH DAMAGE.
+#
+# == Usage Notes
+# Enter an expression to evaluate. Previous results are stored in variables 
+# starting at <code>$1</code>, and variables are automatically substituted 
+# when used in expressions. If variables are interfering with expressions 
+# like <code>$5 in UK pounds</code>, prefix the number with a space.
+#
+# To name a variable yourself, use the <code>=</code> operator, like so: 
+# <code>$name = 3.14</code>. Variable names can be any combination of letters, 
+# numbers, and "_", and the value you assign can be any expression. The 
+# expression will be evaluated before the assignment occurs, but you can 
+# override this by including a <code><</code> character before the equals 
+# sign, thusly: <code>$name <= 5</code>.
+#
+# To save the current contents of memory, type <code>save [name]</code>. If 
+# the name is omitted, memory will be saved to a default file. Memory 
+# files are saved in YAML format, under the <code>.cli-calc</code> directory in 
+# your home directory.
+#
+# To load a saved memory file, type <code>restore [name]</code>. If the file 
+# is omitted, memory will be loaded from the default location. The contents of 
+# the file will replace the current contents of memory.
+#
+# For other commands, type "help" inside the program.
+#
+# Bash-like command completion, line editing, and history are available 
+# through the Readline library. Completion targets are stored at the end of 
+# the source file if you want to change them. Variables and save file names 
+# are also provided for completion. 
+# 
+# If you're behind a proxy, be sure the <code>http_proxy</code> environment 
+# variable is set.
+#
+# Use the <code>-h</code> flag when starting the program for a full list of 
+# command-line options.
+#
+# == In Case of Total Catastrophic Failure
+# Don't panic. Either your your computer is off, you're not connected to the
+# Internet, or Google changed the HTML it sends back and the regular 
+# expression this script is using to scrape the results is broken. Check
+# <http://code.google.com/p/cli-calc/> for a new version.
 
 require 'optparse'
+require 'rdoc/usage'
+file = Net::HTTP.get(URI.parse(url))
+gz = Zlib::GzipReader.new(StringIO.new(file))
+whole_xml = gz.read
+Then to load into Hpricot to do the XML parsing:
+
+hp = Hpricot(whole_xml)
+require 'uri'
 require "yaml"
 require "fileutils"
+require 'open-uri'
 require 'readline'
-require 'dentaku'
 
-$version_string = "calc 3.0a\nCopyright 2009-2025 Chris Biagini"
+$version_string = "cli-calc 2.0\nCopyright 2009 Chris Biagini"
 
 $usage = <<USAGE
 Usage
@@ -33,6 +112,16 @@ USAGE
 trap("SIGINT") do
   puts ""
   exit
+end
+
+# set up proxy support if necessary
+if ENV['http_proxy'] then
+  uri = URI.parse(ENV['http_proxy'])
+  $proxy_host = uri.host
+  $proxy_port = uri.port
+else
+  $proxy_host = nil;
+  $proxy_port = nil;  
 end
 
 class Memory
@@ -165,7 +254,7 @@ class Memory
       memory_table = ""
     
       sorted_array.each do |memory_pair|
-        memory_table << "  $" + memory_pair[0].to_s + " = " + memory_pair[1].to_s + "\n"
+        memory_table << "  $" + memory_pair[0] + " = " + memory_pair[1] + "\n"
       end
     
       return memory_table
@@ -186,8 +275,55 @@ end
 
 # Actually looks up results from Google. Could maybe fall back to bc on error?
 def do_calculation(expression)
-  calculator = Dentaku::Calculator.new
-  calculator.evaluate(expression)
+  # if it's just a decimal number, we don't need to ask Google for anything
+  if expression.match(/^ *([0-9]*\.?[0-9]+|[0-9]+\.?[0-9]*) *$/) then
+    return expression
+  end
+  
+  # google doesn't understand numbers like '1 000'
+  expression = expression.gsub(/(\d) (\d)/,'\1\2')
+
+  # encode fancy characters in expression using method stolen from CGI::escape  
+  expression = expression.gsub(/([^ a-zA-Z0-9_.-]+)/n) do
+      '%' + $1.unpack('H2' * $1.size).join('%').upcase
+  end.tr(' ', '+')
+
+  # create URL and query, appending "=" to force evaluation  
+  url = URI.parse("http://www.google.com/")
+  queryString = "/search?q=" + expression + "%3D";
+
+  begin
+    googleResponse = Net::HTTP::Proxy($proxy_host, $proxy_port, nil, nil).start(url.host, url.port) do |http|
+      http.get(queryString)
+    end
+
+  rescue SocketError
+    raise "Error contacting Google"
+  end
+
+  # other people use XPath, but this actually seems more robust :)
+  matches = googleResponse.body.match(/<b>(.*?) += +(.*?) *<\/b>/); 
+
+  if matches.nil? then
+    raise "Error extracting results"
+  end
+
+  # If we did match the pattern:
+  # Group 1 is Google's reformatted version of the expression, could be useful later
+  # Group 2 is the result
+
+  expression = $1.strip;
+  result = $2.strip;
+
+  # Since result can contain HTML, we have to strip it out
+
+  result = result.gsub(/&#215;/," x ");   # fancy Unicode multiplication sign
+  result = result.gsub(/<sup>/,"^");      # carets to mark beginning of superscripts        
+  result = result.gsub(/<.+?>/,"");       # remove all other HTML
+  result = result.gsub(/\xa0/, " ")       # remove weird space characters
+  result = result.gsub(/ +/," ");         # remove extraneous spaces
+
+  return result
 end
 
 
@@ -240,7 +376,7 @@ end
 while true
 
   # read a line
-  command = Readline.readline("? ", true).strip.gsub(/\t/, " ")
+  command = Readline.readline("? ", TRUE).strip.gsub(/\t/, " ")
   
   case command
     when /^$/             # ignore blank input
@@ -358,3 +494,486 @@ cubic
 square
 in
 per
+
+# Trig Functions #
+sin
+cos
+tan
+sec
+csc
+cot
+arcsin
+arccos
+arctan
+arccsc
+sinh
+cosh
+tanh
+csch
+arsinh
+arccsch
+
+# Logarithmic Functions #
+ln
+log
+lg
+exp
+
+# Probability Functions #
+choose
+!
+
+# Mathematical Constants #
+e
+pi
+i
+gamma
+
+# Currency #
+Australian Dollars
+British Pounds
+Euros
+US Dollars
+
+# Mass #
+pennyweights
+drams
+grains
+pounds
+lbs
+carats
+stones
+tons
+tonnes
+atomic mass units
+yoctograms
+zeptograms
+attograms
+femtograms
+picograms
+nanograms
+micrograms
+milligrams
+centigrams
+decigrams
+grams
+dekagrams
+hectograms
+kilograms
+megagrams
+gigagrams
+teragrams
+petagrams
+exagrams
+zettagrams
+yottagrams
+
+# Length #
+miles
+feet
+fathoms
+rods
+Angstroms
+cubits
+furlongs
+smoots
+astronomical units
+light years
+yoctometers
+zeptometers
+attometers
+femtometers
+picometers
+nanometers
+micrometers
+millimeters
+centimeters
+decimeters
+meters
+dekameters
+hectometers
+kilometers
+megameters
+gigameters
+terameters
+petameters
+exameters
+zettameters
+yottameters
+
+# Time #
+minutes
+hours
+days
+centuries
+sidereal years
+fortnights
+yoctoseconds
+zeptoseconds
+attoseconds
+femtoseconds
+picoseconds
+nanoseconds
+microseconds
+milliseconds
+centiseconds
+deciseconds
+seconds
+dekaseconds
+hectoseconds
+kiloseconds
+megaseconds
+gigaseconds
+teraseconds
+petaseconds
+exaseconds
+zettaseconds
+yottaseconds
+
+# Speed #
+knots
+mph
+kph
+
+# Electrical Current #
+amperes
+yoctoamps
+zeptoamps
+attoamps
+femtoamps
+picoamps
+nanoamps
+microamps
+milliamps
+centiamps
+deciamps
+amps
+dekaamps
+hectoamps
+kiloamps
+megaamps
+gigaamps
+teraamps
+petaamps
+exaamps
+zettaamps
+yottaamps
+
+# Electrical Potential #
+yoctovolts
+zeptovolts
+attovolts
+femtovolts
+picovolts
+nanovolts
+microvolts
+millivolts
+centivolts
+decivolts
+volts
+dekavolts
+hectovolts
+kilovolts
+megavolts
+gigavolts
+teravolts
+petavolts
+exavolts
+zettavolts
+yottavolts
+
+# Electrical Resistance #
+yoctoohms
+zeptoohms
+attoohms
+femtoohms
+picoohms
+nanoohms
+microohms
+milliohms
+centiohms
+deciohms
+ohms
+dekaohms
+hectoohms
+kiloohms
+megaohms
+gigaohms
+teraohms
+petaohms
+exaohms
+zettaohms
+yottaohms
+
+# Electrical Inductance #
+henrys
+
+# Temperature #
+kelvin
+Fahrenheit
+Celsius
+centigrade
+
+# Amount of Substance #
+yoctomoles
+zeptomoles
+attomoles
+femtomoles
+picomoles
+nanomoles
+micromoles
+millimoles
+centimoles
+decimoles
+moles
+dekamoles
+hectomoles
+kilomoles
+megamoles
+gigamoles
+teramoles
+petamoles
+examoles
+zettamoles
+yottamoles
+
+# Luminous Intensity #
+yoctocandela
+zeptocandela
+attocandela
+femtocandela
+picocandela
+nanocandela
+microcandela
+millicandela
+centicandela
+decicandela
+candela
+dekacandela
+hectocandela
+kilocandela
+megacandela
+gigacandela
+teracandela
+petacandela
+exacandela
+zettacandela
+yottacandela
+
+# Force #
+pounds
+ounces
+yoctonewtons
+zeptonewtons
+attonewtons
+femtonewtons
+piconewtons
+nanonewtons
+micronewtons
+millinewtons
+centinewtons
+decinewtons
+newtons
+dekanewtons
+hectonewtons
+kilonewtons
+meganewtons
+giganewtons
+teranewtons
+petanewtons
+exanewtons
+zettanewtons
+yottanewtons
+
+# Volume #
+gallons
+bushels
+teaspoons
+tablespoons
+pints
+shots
+cups
+teaspoons
+tablespoons
+yoctoliters
+zeptoliters
+attoliters
+femtoliters
+picoliters
+nanoliters
+microliters
+milliliters
+centiliters
+deciliters
+liter
+dekaliters
+hectoliters
+kiloliters
+megaliters
+gigaliters
+teraliters
+petaliters
+exaliters
+zettaliters
+yottaliters
+
+# Area #
+acres
+hectares
+
+# Energy #
+Calories
+British thermal units
+BTU
+joules
+ergs
+foot-pounds
+electron volt
+eV
+yoctocalories
+zeptocalories
+attocalories
+femtocalories
+picocalories
+nanocalories
+microcalories
+millicalories
+centicalories
+decicalories
+calories
+dekacalories
+hectocalories
+kilocalories
+megacalories
+gigacalories
+teracalories
+petacalories
+exacalories
+zettacalories
+yottacalories
+
+# Power #
+horsepower
+hp
+yoctowatts
+zeptowatts
+attowatts
+femtowatts
+picowatts
+nanowatts
+microwatts
+milliwatts
+centiwatts
+deciwatts
+watts
+dekawatts
+hectowatts
+kilowatts
+megawatts
+gigawatts
+terawatts
+petawatts
+exawatts
+zettawatts
+yottawatts
+
+# Data #
+yoctobits
+zeptobits
+attobits
+femtobits
+picobits
+nanobits
+microbits
+millibits
+centibits
+decibits
+bits
+dekabits
+hectobits
+kilobits
+megabits
+gigabits
+terabits
+petabits
+exabits
+zettabits
+yottabits
+yoctobytes
+zeptobytes
+attobytes
+femtobytes
+picobytes
+nanobytes
+microbytes
+millibytes
+centibytes
+decibytes
+bytes
+dekabytes
+hectobytes
+kilobytes
+megabytes
+gigabytes
+terabytes
+petabytes
+exabytes
+zettabytes
+yottabytes
+
+# Numbers #
+dozens
+baker's dozens
+gross
+great gross
+score
+googol
+avogadro's number
+
+# Number Systems #
+decimal
+hexadecimal
+octal
+binary
+roman numerals
+
+# Physical Constants #
+answer to life, the universe, and everything
+boltzmann constant
+electric constant
+permitivity of free space
+epsilon_0
+electron mass
+rydberg constant
+speed of light
+c
+speed of sound
+stefan-boltzmann constant
+elementary charge
+euler's constant
+faraday constant
+fine-structure constant
+gravitational constant
+magnetic flux quantum
+
+# Planetary Data #
+m_Mercury
+m_Venus
+m_Earth
+m_Mars
+m_Jupiter
+m_Saturn
+m_Uranus
+m_Neptune
+m_Pluto
+m_Sun
+r_Mercury
+r_Venus
+r_Earth
+r_Mars
+r_Jupiter
+r_Saturn
+r_Uranus
+r_Neptune
+r_Pluto
+r_Sun
